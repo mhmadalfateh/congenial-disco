@@ -1,0 +1,96 @@
+name: Build Fateh Messenger APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
+
+      - name: Extract project ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p extracted
+
+          ZIP_FILE=$(find . -maxdepth 3 -type f -name '*.zip' \
+            ! -path './extracted/*' -print -quit)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "::error::No project ZIP found in repository."
+            exit 1
+          fi
+
+          unzip -o "$ZIP_FILE" -d extracted
+
+          SETTINGS=$(find extracted -type f \( \
+            -name settings.gradle \
+            -o -name settings.gradle.kts \
+          \) -print -quit)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "::error::No Gradle project found inside ZIP."
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$SETTINGS")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Project found: $PROJECT_DIR"
+
+      - name: Add Firebase configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SOURCE="app/google-services.json"
+
+          if [ ! -f "$SOURCE" ]; then
+            echo "::error::Firebase config not found at app/google-services.json"
+            exit 1
+          fi
+
+          mkdir -p "$PROJECT_DIR/app"
+          cp "$SOURCE" "$PROJECT_DIR/app/google-services.json"
+
+          echo "Firebase configuration copied."
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROJECT_DIR"
+
+          if [ ! -f gradlew ]; then
+            echo "::error::Gradle wrapper missing from project ZIP."
+            exit 1
+          fi
+
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fateh-Messenger-APK
+          path: extracted/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
